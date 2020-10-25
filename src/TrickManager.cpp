@@ -235,9 +235,9 @@ UnityEngine::Transform* TrickManager::FindBasicSaberTransform() {
 
 void TrickManager::Start2() {
     getLogger().debug("TrickManager.Start2!");
-    UnityEngine::Transform* saberModelT;
-    UnityEngine::Transform* basicSaberT = nullptr;
-    if (!getPluginConfig().EnableTrickCutting.GetValue()) {
+    UnityEngine::Transform* saberModelT = _saberT->Find(_saberName);
+    UnityEngine::Transform* basicSaberT = FindBasicSaberTransform();
+    if (!saberModelT) {
         // Try to find a custom saber - will have same name as _saberT (LeftSaber or RightSaber) but be a child of it
 
         saberModelT = _saberT->Find(_saberName);
@@ -291,20 +291,11 @@ void TrickManager::Start2() {
                 UnityEngine::Object::Destroy(trailComponent);
             }
         }
-    } else {
-        saberModelT = Saber->get_transform();
     }
     CRASH_UNLESS(saberModelT);
-    UnityEngine::GameObject* saberGO;
-    if (TrailFollowsSaberComponent) {
-        saberGO = Saber->get_gameObject();
-    } else {
-        saberGO = saberModelT->get_gameObject();
-    }
+    UnityEngine::GameObject* saberGO = saberModelT->get_gameObject();
     getLogger().debug("root Saber gameObject: %p", Saber->get_gameObject());
-    _saberTrickModel = new SaberTrickModel(Saber, _isLeftSaber ? 0 : 1);
-    // note that this is the transform of the whole Saber (as opposed to just the model) iff TrickCutting
-    _originalSaberModelT = saberGO->get_transform();
+    _saberTrickModel = new SaberTrickModel(saberGO, _isLeftSaber ? 0 : 1);
 }
 
 void TrickManager::StaticClear() {
@@ -547,7 +538,7 @@ void TrickManager::Update() {
     }
     // TODO: no tricks while paused? https://github.com/ToniMacaroni/TrickSaber/blob/ea60dce35db100743e7ba72a1ffbd24d1472f1aa/TrickSaber/SaberTrickManager.cs#L66
     CheckButtons();
-    _saberTrickModel->Update();  // necessary for the trail to follow it
+    if (TrailFollowsSaberComponent) _saberTrickModel->Update();
     // logger().debug("Leaving TrickSaber::Update");
 }
 

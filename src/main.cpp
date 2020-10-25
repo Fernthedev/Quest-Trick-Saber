@@ -176,13 +176,13 @@ MAKE_HOOK_OFFSETLESS(Saber_ManualUpdate, void, Saber* self) {
 
 // TODO: remove
 void DisableBurnMarks(int saberType) {
-    /*
+    if (AttachForSpin) return;
     if (!FakeSaber) {
-        static auto* tSaber = csTypeOf(Saber*);
         auto* core = UnityEngine::GameObject::Find(il2cpp_utils::createcsstr("GameCore"));
         FakeSaber = core->AddComponent<Saber*>();
 
         FakeSaber->set_enabled(false);
+        fakeSabers.insert(FakeSaber);
 
         getLogger().info("FakeSaber.isActiveAndEnabled: %i",FakeSaber->get_isActiveAndEnabled());
 
@@ -197,10 +197,19 @@ void DisableBurnMarks(int saberType) {
             sabers->values[saberType] = FakeSaber;
         }
     }
-     \*/
+    getLogger().debug("Leaving DisableBurnMarks");
 }
 
 void EnableBurnMarks(int saberType) {
+    if (AttachForSpin) return;
+    for (auto* type : tBurnTypes) {
+        auto *components = UnityEngine::Object::FindObjectsOfType(type);
+        for (int i = 0; i < components->Length(); i++) {
+
+            auto *sabers = CRASH_UNLESS(il2cpp_utils::GetFieldValue<Array<Saber *> *>(components->values[i], "_sabers"));
+            sabers->values[saberType] = saberType ? saberManager->rightSaber : saberManager->leftSaber;
+        }
+    }
     /*
     for (auto *type : tBurnTypes) {
         auto *components = UnityEngine::Object::FindObjectsOfType(type);
@@ -210,7 +219,7 @@ void EnableBurnMarks(int saberType) {
             sabers->values[saberType] = saberType ? saberManager->rightSaber : saberManager->leftSaber;
         }
     }
-    */
+     */
 }
 
 

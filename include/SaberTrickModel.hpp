@@ -22,6 +22,7 @@
 #include "GlobalNamespace/SaberModelContainer.hpp"
 #include "GlobalNamespace/SaberModelController.hpp"
 #include "GlobalNamespace/SaberTrail.hpp"
+#include "GlobalNamespace/VRController.hpp"
 #include "GlobalNamespace/SaberMovementData.hpp"
 #include "System/Collections/Generic/List_1.hpp"
 #include "SaberTrickTrail.hpp"
@@ -39,15 +40,29 @@ class SaberTrickModel {
         CRASH_UNLESS(SaberModel);
         getLogger().debug("SaberTrickModel construction!");
 
-        SaberGO = RealModel = SaberModel;
-        SpinT = RealT = RealModel->get_transform();
-        RealSaber = RealModel->GetComponent<GlobalNamespace::Saber*>();
-        AttachedP = RealSaber->get_transform();
+        static auto* tSaber = CRASH_UNLESS(il2cpp_utils::GetSystemType("", "Saber"));
+        RealSaber = SaberModel->GetComponentsInParent<GlobalNamespace::Saber*>(true)->values[0];
+
+        if (!AttachForSpin && !SpinIsRelativeToVRController) {
+            SpinT = RealT = RealSaber->get_transform();
+        } else {
+            SpinT = RealT = SaberModel->get_transform();
+        }
 
 
         if (getPluginConfig().EnableTrickCutting.GetValue()) {
+            SaberGO = RealModel = RealSaber->get_gameObject();
             SetupRigidbody(RealModel);
         } else {
+            // The one to hide during TrickModel appearances
+            RealModel = SaberModel;
+
+            if (TrailFollowsSaberComponent) {
+                SaberGO = RealSaber->get_gameObject();
+            } else {
+                SaberGO = SaberModel;
+            }
+
             TrickModel = UnityEngine::Object::Instantiate(RealModel);
             CRASH_UNLESS(TrickModel);
             TrickModel->set_name(il2cpp_utils::createcsstr(
@@ -60,35 +75,37 @@ class SaberTrickModel {
             TrickT = TrickModel->get_transform();
             if (AttachForSpin) SpinT = TrickT;
 
-            TrickSaber = TrickModel->GetComponent<GlobalNamespace::Saber*>();
-            CRASH_UNLESS(TrickSaber != RealSaber);
-            getLogger().debug("Inserting TrickSaber %p to fakeSabers.", TrickSaber);
-            fakeSabers.insert(TrickSaber);
+            if (TrailFollowsSaberComponent) {
+                TrickSaber = TrickModel->GetComponent<GlobalNamespace::Saber *>();
+                CRASH_UNLESS(TrickSaber);
+                CRASH_UNLESS(TrickSaber != RealSaber);
+                getLogger().debug("Inserting TrickSaber %p to fakeSabers.", TrickSaber);
+                fakeSabers.insert(TrickSaber);
 
-            static auto* tBehaviour = CRASH_UNLESS(il2cpp_utils::GetSystemType("UnityEngine", "Behaviour"));
-            auto* comps = TrickModel->GetComponents<UnityEngine::Behaviour*>();
-            for (int i = 0; i < comps->Length(); i++) {
-                auto* klass = CRASH_UNLESS(il2cpp_functions::object_get_class(comps->values[i]));
-                auto name = il2cpp_utils::ClassStandardName(klass);
-                if (ForbiddenComponents.contains(name)) {
-                    getLogger().debug("Destroying component of class %s!", name.c_str());
-                    UnityEngine::Object::DestroyImmediate(comps->values[i]);
-                } else if (name == "::Saber") {
-                    TrickSaber = reinterpret_cast<GlobalNamespace::Saber*>(comps->values[i]);
+                auto *comps = TrickModel->GetComponents<UnityEngine::Behaviour *>();
+                for (int i = 0; i < comps->Length(); i++) {
+                    auto *klass = CRASH_UNLESS(il2cpp_functions::object_get_class(comps->values[i]));
+                    auto name = il2cpp_utils::ClassStandardName(klass);
+                    if (ForbiddenComponents.contains(name)) {
+                        getLogger().debug("Destroying component of class %s!", name.c_str());
+                        UnityEngine::Object::DestroyImmediate(comps->values[i]);
+                    }
                 }
             }
 
             FixSaber(TrickModel);
             SetupRigidbody(TrickModel);
 
-
+            if (AttachForSpin) {
+                auto* vrController = SaberModel->GetComponentsInParent<GlobalNamespace::VRController*>(true)->values[0];
+                AttachedP = vrController->get_transform();
+            }
 
             auto* str = CRASH_UNLESS(il2cpp_utils::createcsstr("VRGameCore"));
             auto* vrGameCore = UnityEngine::GameObject::Find(str);
             UnattachedP = vrGameCore->get_transform();
-            auto* trickModelT = TrickModel->get_transform();
 
-            trickModelT->SetParent(UnattachedP);
+            TrickT->SetParent(UnattachedP);
             TrickModel->SetActive(false);
         }
 
@@ -186,23 +203,23 @@ class SaberTrickModel {
             EndSpin();
         }
         if (SaberGO == TrickModel) return;
-        CRASH_UNLESS(il2cpp_utils::RunMethod(TrickModel, "SetActive", true));
-        auto pos = CRASH_UNLESS(il2cpp_utils::GetPropertyValue<Vector3>(RealT, "position"));
-        auto rot = CRASH_UNLESS(il2cpp_utils::GetPropertyValue<Quaternion>(RealT, "rotation"));
-        CRASH_UNLESS(il2cpp_utils::SetPropertyValue(TrickT, "position", pos));
-        CRASH_UNLESS(il2cpp_utils::SetPropertyValue(TrickT, "rotation", rot));
-        CRASH_UNLESS(il2cpp_utils::RunMethod(RealModel, "SetActive", false));
+        auto pos = RealT->get_position();
+        auto rot = RealT->get_rotation();
+        RealModel->SetActive(false);
+        TrickModel->SetActive(true);
+        TrickT->set_position(pos);
+        TrickT->set_rotation(rot);
         SaberGO = TrickModel;
-        _UpdateComponentsWithSaber(TrickSaber);
+        if (TrailFollowsSaberComponent) _UpdateComponentsWithSaber(TrickSaber);
     }
 
     void EndThrow() {
         if (getPluginConfig().EnableTrickCutting.GetValue()) return;
         if (SaberGO == RealModel) return;
-        CRASH_UNLESS(il2cpp_utils::RunMethod(RealModel, "SetActive", true));
-        CRASH_UNLESS(il2cpp_utils::RunMethod(TrickModel, "SetActive", false));
+        RealModel->SetActive(true);
+        TrickModel->SetActive(false);
         SaberGO = RealModel;
-        _UpdateComponentsWithSaber(RealSaber);
+        if (TrailFollowsSaberComponent) _UpdateComponentsWithSaber(RealSaber);
     }
 
     void PrepareForSpin() {
