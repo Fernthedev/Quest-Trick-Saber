@@ -164,19 +164,19 @@ MAKE_HOOK_OFFSETLESS(Saber_Start, void, Saber* self) {
 }
 
 MAKE_HOOK_OFFSETLESS(Saber_ManualUpdate, void, Saber* self) {
+    Saber_ManualUpdate(self);
     if (self == leftSaber.Saber) {
         leftSaber.Update();
     } else if (self == rightSaber.Saber) {
         // rightSaber.LogEverything();
         rightSaber.Update();
     }
-    Saber_ManualUpdate(self);
 }
 
 
 // TODO: remove
 void DisableBurnMarks(int saberType) {
-    if (AttachForSpin) return;
+    if (TrailFollowsSaberComponent) return;
     if (!FakeSaber) {
         auto* core = UnityEngine::GameObject::Find(il2cpp_utils::createcsstr("GameCore"));
         FakeSaber = core->AddComponent<Saber*>();
@@ -201,7 +201,7 @@ void DisableBurnMarks(int saberType) {
 }
 
 void EnableBurnMarks(int saberType) {
-    if (AttachForSpin) return;
+    if (TrailFollowsSaberComponent) return;
     for (auto* type : tBurnTypes) {
         auto *components = UnityEngine::Object::FindObjectsOfType(type);
         for (int i = 0; i < components->Length(); i++) {

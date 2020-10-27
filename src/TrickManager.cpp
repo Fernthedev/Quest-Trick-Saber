@@ -441,6 +441,7 @@ void TrickManager::Update() {
     }
     if (_gamePaused) return;
     // RET_V_UNLESS(il2cpp_utils::GetPropertyValue<bool>(VRController, "enabled").value_or(false));
+    if (TrailFollowsSaberComponent) _saberTrickModel->Update();
 
     std::optional<UnityEngine::Quaternion> oRot;
     if (_spinState == Ending) {  // not needed for Started because only Rotate and _currentRotation are used
@@ -538,7 +539,6 @@ void TrickManager::Update() {
     }
     // TODO: no tricks while paused? https://github.com/ToniMacaroni/TrickSaber/blob/ea60dce35db100743e7ba72a1ffbd24d1472f1aa/TrickSaber/SaberTrickManager.cs#L66
     CheckButtons();
-    if (TrailFollowsSaberComponent) _saberTrickModel->Update();
     // logger().debug("Leaving TrickSaber::Update");
 }
 
