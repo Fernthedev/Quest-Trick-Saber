@@ -69,12 +69,22 @@ Saber* RealSaber = nullptr;
 TrickManager leftSaber;
 TrickManager rightSaber;
 
+
+bool AttachForSpin;
+bool SpinIsRelativeToVRController;
+void UpdateForConfig() {
+    AttachForSpin = TrailFollowsSaberComponent && !getPluginConfig().EnableTrickCutting.GetValue();
+    SpinIsRelativeToVRController = AttachForSpin;
+}
+
+
 MAKE_HOOK_OFFSETLESS(SceneManager_Internal_SceneLoaded, void, UnityEngine::SceneManagement::Scene scene, UnityEngine::SceneManagement::LoadSceneMode mode) {
     getLogger().info("SceneManager_Internal_SceneLoaded");
     if (auto* nameOpt = scene.get_name()) {
         auto* name = nameOpt;
         auto str = to_utf8(csstrtostr(name));
         getLogger().debug("Scene name internal: %s", str.c_str());
+        // sabersEnabled = (str == "GameCore");
     }
     FakeSaber = nullptr;
     RealSaber = nullptr;
@@ -82,6 +92,7 @@ MAKE_HOOK_OFFSETLESS(SceneManager_Internal_SceneLoaded, void, UnityEngine::Scene
     leftSaber.Clear();
     rightSaber.Clear();
     SceneManager_Internal_SceneLoaded(scene, mode);
+    fakeSabers.clear();
 }
 
 MAKE_HOOK_OFFSETLESS(GameScenesManager_PushScenes, void, GlobalNamespace::GameScenesManager* self, GlobalNamespace::ScenesTransitionSetupDataSO* scenesTransitionSetupData,
@@ -96,6 +107,8 @@ MAKE_HOOK_OFFSETLESS(GameScenesManager_PushScenes, void, GlobalNamespace::GameSc
     } else {
         bs_utils::Submission::enable(modInfo);
     }
+
+    UpdateForConfig();
 
     objectCount = 0;
 
@@ -151,19 +164,19 @@ MAKE_HOOK_OFFSETLESS(Saber_Start, void, Saber* self) {
 }
 
 MAKE_HOOK_OFFSETLESS(Saber_ManualUpdate, void, Saber* self) {
-    Saber_ManualUpdate(self);
     if (self == leftSaber.Saber) {
         leftSaber.Update();
     } else if (self == rightSaber.Saber) {
         // rightSaber.LogEverything();
         rightSaber.Update();
     }
+    Saber_ManualUpdate(self);
 }
 
-static std::vector<System::Type*> tBurnTypes;
 
-
+// TODO: remove
 void DisableBurnMarks(int saberType) {
+    /*
     if (!FakeSaber) {
         static auto* tSaber = csTypeOf(Saber*);
         auto* core = UnityEngine::GameObject::Find(il2cpp_utils::createcsstr("GameCore"));
@@ -184,9 +197,11 @@ void DisableBurnMarks(int saberType) {
             sabers->values[saberType] = FakeSaber;
         }
     }
+     \*/
 }
 
 void EnableBurnMarks(int saberType) {
+    /*
     for (auto *type : tBurnTypes) {
         auto *components = UnityEngine::Object::FindObjectsOfType(type);
         for (int i = 0; i < components->Length(); i++) {
@@ -195,6 +210,7 @@ void EnableBurnMarks(int saberType) {
             sabers->values[saberType] = saberType ? saberManager->rightSaber : saberManager->leftSaber;
         }
     }
+    */
 }
 
 
@@ -364,6 +380,7 @@ void DidDeActivate(HMUI::ViewController* self,bool removedFromHierarchy, bool sc
 
 extern "C" void load() {
     il2cpp_functions::Init();
+    UpdateForConfig();
     // TODO: config menus
     getLogger().info("Installing hooks...");
 
@@ -394,9 +411,9 @@ extern "C" void load() {
 
 //    INSTALL_HOOK_OFFSETLESS(getLogger(), VRController_Update, il2cpp_utils::FindMethodUnsafe("", "GameSongController", "StartSong", 1));
 
-    tBurnTypes.push_back(csTypeOf(GlobalNamespace::SaberBurnMarkArea*));
-    tBurnTypes.push_back(csTypeOf(GlobalNamespace::SaberBurnMarkSparkles*));
-    tBurnTypes.push_back(csTypeOf(GlobalNamespace::ObstacleSaberSparkleEffectManager*));
+    tBurnTypes.insert(csTypeOf(GlobalNamespace::SaberBurnMarkArea*));
+    tBurnTypes.insert(csTypeOf(GlobalNamespace::SaberBurnMarkSparkles*));
+    tBurnTypes.insert(csTypeOf(GlobalNamespace::ObstacleSaberSparkleEffectManager*));
 
     getLogger().info("Registering custom types");
     custom_types::Register::RegisterType<TrickSaber::TrickSaberTrailData>();

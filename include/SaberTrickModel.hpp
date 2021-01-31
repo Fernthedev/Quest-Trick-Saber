@@ -1,5 +1,7 @@
 #pragma once
 
+#include <unordered_set>
+#include "main.hpp"
 #include "PluginConfig.hpp"
 #include "beatsaber-hook/shared/utils/il2cpp-functions.hpp"
 #include "beatsaber-hook/shared/utils/il2cpp-utils.hpp"
@@ -31,27 +33,22 @@ class SaberTrickModel {
   public:
     UnityEngine::Rigidbody* Rigidbody = nullptr;
     UnityEngine::GameObject* SaberGO;  // GameObject
-    GlobalNamespace::Saber* saberScript;
-    bool basicSaber;
+    UnityEngine::Transform* SpinT;   // Transform
 
-    SaberTrickModel(GlobalNamespace::Saber* saber, UnityEngine::GameObject* SaberModel, bool basicSaber) {
+    SaberTrickModel(UnityEngine::GameObject* SaberModel, int st) : saberType(st) {
         CRASH_UNLESS(SaberModel);
-        this->basicSaber = basicSaber;
-        saberScript = saber;
-        getLogger().debug("SaberTrickModel construction! %s", basicSaber ? "true" : "false");
-        // il2cpp_utils::LogClass(il2cpp_functions::class_from_system_type(tRigidbody), false);
+        getLogger().debug("SaberTrickModel construction!");
 
-        SaberGO = OriginalSaberModel = SaberModel;
+        SaberGO = RealModel = SaberModel;
+        SpinT = RealT = RealModel->get_transform();
+        RealSaber = RealModel->GetComponent<GlobalNamespace::Saber*>();
+        AttachedP = RealSaber->get_transform();
+
 
         if (getPluginConfig().EnableTrickCutting.GetValue()) {
-            Rigidbody = SaberModel->GetComponent<UnityEngine::Rigidbody*>();
-            if (!Rigidbody) {
-                getLogger().warning("Adding rigidbody to original SaberModel?!");
-                Rigidbody = SaberModel->AddComponent<UnityEngine::Rigidbody*>();
-            }
-            SetupRigidbody(Rigidbody, OriginalSaberModel);
+            SetupRigidbody(RealModel);
         } else {
-            TrickModel = UnityEngine::Object::Instantiate(SaberModel);
+            TrickModel = UnityEngine::Object::Instantiate(RealModel);
             CRASH_UNLESS(TrickModel);
             TrickModel->set_name(il2cpp_utils::createcsstr(
                     saberPrefix + to_utf8(csstrtostr(SaberModel->get_name())) + "_" + std::to_string((int) saber->saberType->saberType)
@@ -60,39 +57,70 @@ class SaberTrickModel {
             FixBasicTrickSaber(TrickModel, basicSaber);
             AddTrickRigidbody();
 
+            TrickT = TrickModel->get_transform();
+            if (AttachForSpin) SpinT = TrickT;
+
+            TrickSaber = TrickModel->GetComponent<GlobalNamespace::Saber*>();
+            CRASH_UNLESS(TrickSaber != RealSaber);
+            getLogger().debug("Inserting TrickSaber %p to fakeSabers.", TrickSaber);
+            fakeSabers.insert(TrickSaber);
+
+            static auto* tBehaviour = CRASH_UNLESS(il2cpp_utils::GetSystemType("UnityEngine", "Behaviour"));
+            auto* comps = TrickModel->GetComponents<UnityEngine::Behaviour*>();
+            for (int i = 0; i < comps->Length(); i++) {
+                auto* klass = CRASH_UNLESS(il2cpp_functions::object_get_class(comps->values[i]));
+                auto name = il2cpp_utils::ClassStandardName(klass);
+                if (ForbiddenComponents.contains(name)) {
+                    getLogger().debug("Destroying component of class %s!", name.c_str());
+                    UnityEngine::Object::DestroyImmediate(comps->values[i]);
+                } else if (name == "::Saber") {
+                    TrickSaber = reinterpret_cast<GlobalNamespace::Saber*>(comps->values[i]);
+                }
+            }
+
+            FixSaber(TrickModel);
+            SetupRigidbody(TrickModel);
+
 
 
             auto* str = CRASH_UNLESS(il2cpp_utils::createcsstr("VRGameCore"));
             auto* vrGameCore = UnityEngine::GameObject::Find(str);
-            auto* vrGameCoreT = vrGameCore->get_transform();
+            UnattachedP = vrGameCore->get_transform();
             auto* trickModelT = TrickModel->get_transform();
 
-            trickModelT->SetParent(vrGameCoreT);
+            trickModelT->SetParent(UnattachedP);
             TrickModel->SetActive(false);
         }
 
         getLogger().debug("Leaving SaberTrickModel construction!");
     }
 
-    void SetupRigidbody(UnityEngine::Rigidbody* rigidbody, UnityEngine::GameObject* model) {
-        getLogger().debug("Rigid body pos: (%f %f %f) (%f %f %f)", rigidbody->get_position().x, rigidbody->get_position().y, rigidbody->get_position().z, rigidbody->get_transform()->get_localPosition().x, rigidbody->get_transform()->get_localPosition().y, rigidbody->get_transform()->get_localPosition().z);
-        rigidbody->set_useGravity(false);
-        rigidbody->set_isKinematic(true);
+    void SetupRigidbody(UnityEngine::GameObject* model) {
+
+        // il2cpp_utils::LogClass(il2cpp_functions::class_from_system_type(tRigidbody), false);
+        Rigidbody = model->GetComponent<UnityEngine::Rigidbody*>();
+        if (!Rigidbody) {
+            Rigidbody = model->AddComponent<UnityEngine::Rigidbody*>();
+        }
+
+        getLogger().debug("Rigid body pos: (%f %f %f) (%f %f %f)", Rigidbody->get_position().x, Rigidbody->get_position().y, Rigidbody->get_position().z, Rigidbody->get_transform()->get_localPosition().x, Rigidbody->get_transform()->get_localPosition().y, Rigidbody->get_transform()->get_localPosition().z);
+        Rigidbody->set_useGravity(false);
+        Rigidbody->set_isKinematic(true);
 
         static auto set_detectCollisions = (function_ptr_t<void, Il2CppObject*, bool>)CRASH_UNLESS(
             il2cpp_functions::resolve_icall("UnityEngine.Rigidbody::set_detectCollisions"));
         getLogger().debug("set_detectCollisions ptr offset: %lX", asOffset(set_detectCollisions));
-        set_detectCollisions(rigidbody, false);
+        set_detectCollisions(Rigidbody, false);
 
         static auto set_maxAngVel = (function_ptr_t<void, Il2CppObject*, float>)CRASH_UNLESS(
             il2cpp_functions::resolve_icall("UnityEngine.Rigidbody::set_maxAngularVelocity"));
         getLogger().debug("set_maxAngVel ptr offset: %lX", asOffset(set_maxAngVel));
-        set_maxAngVel(rigidbody, 800.0f);
+        set_maxAngVel(Rigidbody, 800.0f);
 
         static auto set_interp = (function_ptr_t<void, Il2CppObject*, int>)CRASH_UNLESS(
             il2cpp_functions::resolve_icall("UnityEngine.Rigidbody::set_interpolation"));
         getLogger().debug("set_interpolation ptr offset: %lX", asOffset(set_interp));
-        set_interp(rigidbody, 1);  // Interpolate
+        set_interp(Rigidbody, 1);  // Interpolate
 
         Array<UnityEngine::Collider*>* colliders = model->GetComponentsInChildren<UnityEngine::Collider*>(true); //CRASH_UNLESS(il2cpp_utils::RunMethod<Array<Il2CppObject*>*>(model, "GetComponentsInChildren", tCollider, true));
 
@@ -102,126 +130,138 @@ class SaberTrickModel {
         }
     }
 
-    void AddTrickRigidbody() {
-        Rigidbody = TrickModel->AddComponent<UnityEngine::Rigidbody*>(); //CRASH_UNLESS(il2cpp_utils::RunMethod(TrickModel, "AddComponent", tRigidbody));
-        CRASH_UNLESS(Rigidbody);
-        SetupRigidbody(Rigidbody, TrickModel);
-    }
+    void FixSaber(UnityEngine::GameObject* newSaberGO) {
+        getLogger().debug("Fixing up instantiated Saber gameObject!");
 
-    void FixBasicTrickSaber(UnityEngine::GameObject* newSaber, bool basic) {
-        if (!basic) return;
-        getLogger().debug("Fixing basic trick saber color!");
+        GlobalNamespace::SaberModelContainer *oldSaberModelContainer = SaberGO->GetComponentsInParent<GlobalNamespace::SaberModelContainer *>(
+                false)->values[0];
+        GlobalNamespace::SaberModelContainer *newSaberModelContainer = newSaberGO->GetComponentsInParent<GlobalNamespace::SaberModelContainer *>(
+                false)->values[0];
 
-        GlobalNamespace::SaberModelContainer* saberModelContainer = SaberGO->GetComponentsInParent<GlobalNamespace::SaberModelContainer*>(false)->values[0];
+        auto *diContainer = oldSaberModelContainer->container;
+        newSaberModelContainer->container = diContainer;
 
-        GlobalNamespace::SaberTypeObject* _saberTypeObject = saberModelContainer->saber->saberType;
+        GlobalNamespace::SaberTypeObject *_saberTypeObject = oldSaberModelContainer->saber->saberType;
         GlobalNamespace::SaberType saberType = _saberTypeObject->saberType; // CRASH_UNLESS(il2cpp_utils::GetPropertyValue(_saberTypeObject, "saberType"));
         getLogger().debug("saber type: %i", saberType);
 //        CRASH_UNLESS(saberType);
-        auto* saberModelContainerT = saberModelContainer->get_transform();
+        auto *saberModelContainerT = oldSaberModelContainer->get_transform();
         getLogger().debug("saber container");
         CRASH_UNLESS(saberModelContainerT);
 
-        auto* saberModelController = newSaber->GetComponent<GlobalNamespace::SaberModelController*>();
+        auto *saberModelController = newSaberGO->GetComponent<GlobalNamespace::SaberModelController *>();
         getLogger().debug("saber controller");
         CRASH_UNLESS(saberModelController);
 
-        auto* origModelController = SaberGO->GetComponent<GlobalNamespace::SaberModelController*>(); // CRASH_UNLESS(il2cpp_utils::RunMethod(SaberGO, "GetComponent", tSaberModelController));
-        auto* colorMgr = origModelController->colorManager; // CRASH_UNLESS(il2cpp_utils::GetFieldValue(origModelController, "_colorManager"));
+        auto *origModelController = SaberGO->GetComponent<GlobalNamespace::SaberModelController *>(); // CRASH_UNLESS(il2cpp_utils::RunMethod(SaberGO, "GetComponent", tSaberModelController));
+        auto *colorMgr = origModelController->colorManager; // CRASH_UNLESS(il2cpp_utils::GetFieldValue(origModelController, "_colorManager"));
         getLogger().debug("saber color manager");
         CRASH_UNLESS(colorMgr);
         saberModelController->colorManager = colorMgr;
 
-        auto* glows = saberModelController->setSaberGlowColors; // CRASH_UNLESS(il2cpp_utils::GetFieldValue<Il2CppArray*>(saberModelController, "_setSaberGlowColors"));
+        auto *glows = saberModelController->setSaberGlowColors; // CRASH_UNLESS(il2cpp_utils::GetFieldValue<Il2CppArray*>(saberModelController, "_setSaberGlowColors"));
         getLogger().debug("_setSaberGlowColors.length: %u", glows->Length());
         for (int i = 0; i < glows->Length(); i++) {
-            GlobalNamespace::SetSaberGlowColor* obj = glows->values[i];
+            GlobalNamespace::SetSaberGlowColor *obj = glows->values[i];
 
             obj->colorManager = colorMgr;
         }
 
-        auto* fakeGlows = saberModelController->setSaberFakeGlowColors;
+        auto *fakeGlows = saberModelController->setSaberFakeGlowColors;
         getLogger().debug("_setSaberFakeGlowColors.length: %u", fakeGlows->Length());
         for (int i = 0; i < fakeGlows->Length(); i++) {
-            GlobalNamespace::SetSaberFakeGlowColor* obj = fakeGlows->values[i];
+            GlobalNamespace::SetSaberFakeGlowColor *obj = fakeGlows->values[i];
 
             obj->colorManager = colorMgr;
 
         }
 
-        auto* trickT = TrickModel->get_transform(); // CRASH_UNLESS(il2cpp_utils::GetPropertyValue(TrickModel, "transform"));
-        auto* origT = OriginalSaberModel->get_transform(); // CRASH_UNLESS(il2cpp_utils::GetPropertyValue(OriginalSaberModel, "transform"));
+        saberModelController->Init(saberModelContainerT, TrickSaber);
+    }
 
-        auto pos = origT->get_position(); //CRASH_UNLESS(il2cpp_utils::GetPropertyValue<Vector3>(origT, "position"));
-        auto rot = origT->get_rotation(); //CRASH_UNLESS(il2cpp_utils::GetPropertyValue<Quaternion>(origT, "rotation"));
-
-        trickT->set_position(pos);
-        trickT->set_rotation(rot);
-
-        if (basicSaber) {
-//                TrickModel->GetComponent<GlobalNamespace::SaberTrail*>()->movementData = reinterpret_cast<GlobalNamespace::IBladeMovementData*>(GlobalNamespace::SaberMovementData::New_ctor());
-            auto* trails = TrickModel->GetComponentsInChildren<GlobalNamespace::SaberTrail*>(true);
-            getLogger().debug("trick saber trails.length: %u", fakeGlows->Length());
-            for (int i = 0; i < trails->Length(); i++) {
-                GlobalNamespace::SaberTrail *obj = trails->values[i];
-
-                auto *trailStart = UnityEngine::GameObject::New_ctor();
-                auto *trailEnd = UnityEngine::GameObject::New_ctor();
-
-
-                trailStart->get_transform()->SetParent(obj->get_transform(), false);
-//                trailStart->get_transform()->set_localPosition(saberScript->saberBladeBottomTransform->get_position());
-//                trailStart->get_transform()->set_localRotation(saberScript->saberBladeBottomTransform->get_rotation());
-//                trailStart->get_transform()->set_localPosition(UnityEngine::Vector3(0.0, 0.0, 1.02));
-
-
-                trailEnd->get_transform()->SetParent(saberScript->saberBladeTopTransform, false);
-//                trailEnd->get_transform()->set_localPosition(UnityEngine::Vector3(0.0, 0.0, 0.1));
-//                trailEnd->get_transform()->set_localPosition(saberScript->saberBladeTopTransform->get_position());
-//                trailEnd->get_transform()->set_localRotation(saberScript->saberBladeTopTransform->get_rotation());
-
-                trailStart->set_name(il2cpp_utils::createcsstr("TrailStart"));
-                trailEnd->set_name(il2cpp_utils::createcsstr("TrailEnd"));
-
-                if (obj->get_gameObject()->GetComponents<TrickSaber::TrickSaberTrailData*>()->Length() == 0)
-                    obj->get_gameObject()->AddComponent<TrickSaber::TrickSaberTrailData*>();
-
-
-            }
+    void PrepareForThrow() {
+        if (getPluginConfig().EnableTrickCutting.GetValue()) return;
+        if (attachedForSpin) {
+            getLogger().error("SaberTrickModel::PrepareForThrow was called between PrepareForSpin and EndSpin!");
+            EndSpin();
         }
-
-        saberModelController->Init(saberModelContainerT, saberModelContainer->saber);
-    }
-
-    void ChangeToTrickModel() {
-        if (getPluginConfig().EnableTrickCutting.GetValue()) return;
-        TrickModel->SetActive(true);
-
-        auto* trickT = TrickModel->get_transform(); // CRASH_UNLESS(il2cpp_utils::GetPropertyValue(TrickModel, "transform"));
-        auto* origT = OriginalSaberModel->get_transform(); // CRASH_UNLESS(il2cpp_utils::GetPropertyValue(OriginalSaberModel, "transform"));
-        auto pos = origT->get_position(); //CRASH_UNLESS(il2cpp_utils::GetPropertyValue<Vector3>(origT, "position"));
-        auto rot = origT->get_rotation(); //CRASH_UNLESS(il2cpp_utils::GetPropertyValue<Quaternion>(origT, "rotation"));
-
-        trickT->set_position(pos);
-        trickT->set_rotation(rot);
-        OriginalSaberModel->SetActive(false);
-
+        if (SaberGO == TrickModel) return;
+        CRASH_UNLESS(il2cpp_utils::RunMethod(TrickModel, "SetActive", true));
+        auto pos = CRASH_UNLESS(il2cpp_utils::GetPropertyValue<Vector3>(RealT, "position"));
+        auto rot = CRASH_UNLESS(il2cpp_utils::GetPropertyValue<Quaternion>(RealT, "rotation"));
+        CRASH_UNLESS(il2cpp_utils::SetPropertyValue(TrickT, "position", pos));
+        CRASH_UNLESS(il2cpp_utils::SetPropertyValue(TrickT, "rotation", rot));
+        CRASH_UNLESS(il2cpp_utils::RunMethod(RealModel, "SetActive", false));
         SaberGO = TrickModel;
+        _UpdateComponentsWithSaber(TrickSaber);
     }
 
-    void ChangeToActualSaber() {
+    void EndThrow() {
         if (getPluginConfig().EnableTrickCutting.GetValue()) return;
+        if (SaberGO == RealModel) return;
+        CRASH_UNLESS(il2cpp_utils::RunMethod(RealModel, "SetActive", true));
+        CRASH_UNLESS(il2cpp_utils::RunMethod(TrickModel, "SetActive", false));
+        SaberGO = RealModel;
+        _UpdateComponentsWithSaber(RealSaber);
+    }
 
-        OriginalSaberModel->SetActive(true);
+    void PrepareForSpin() {
+        if (getPluginConfig().EnableTrickCutting.GetValue()) return;
+        if (!AttachForSpin || attachedForSpin) return;
+        getLogger().info("Attaching for spin.");
+        auto pos = RealT->get_position();
+        auto rot = RealT->get_rotation();
+        RealModel->SetActive(false);
+        TrickModel->SetActive(true);
+        SpinT->set_parent(AttachedP);
+        attachedForSpin = true;
+        TrickT->set_position(pos);
+        TrickT->set_rotation(rot);
+    }
+
+    void EndSpin() {
+        if (getPluginConfig().EnableTrickCutting.GetValue()) return;
+        if (!AttachForSpin || !attachedForSpin) return;
+        getLogger().info("Unattaching post-spin.");
+        SpinT->set_parent(AttachedP);
+        attachedForSpin = false;
         TrickModel->SetActive(false);
+        RealModel->SetActive(true);
+    }
 
-        SaberGO = OriginalSaberModel;
+    void Update() {
+        if (getPluginConfig().EnableTrickCutting.GetValue()) return;
+        if (SaberGO != TrickModel) return;
+        // TODO: bypass the hook entirely?
+        TrickSaber->ManualUpdate();
     }
 
 
 
 
   private:
-    UnityEngine::GameObject* OriginalSaberModel = nullptr;  // GameObject
+    UnityEngine::GameObject* RealModel = nullptr;  // GameObject
     UnityEngine::GameObject* TrickModel = nullptr;          // GameObject
+    inline static const std::unordered_set<std::string> ForbiddenComponents = {
+            "::VRController", "::VRControllersValueSOOffsets"
+    };
+    int saberType;
+    bool attachedForSpin = false;
+    GlobalNamespace::Saber* RealSaber = nullptr;   // Saber
+    GlobalNamespace::Saber* TrickSaber = nullptr;  // Saber
+    UnityEngine::Transform* RealT = nullptr;       // Transform
+    UnityEngine::Transform* TrickT = nullptr;      // Transform
+    UnityEngine::Transform* UnattachedP = nullptr; // Transform
+    UnityEngine::Transform* AttachedP = nullptr;   // Transform
+
+    void _UpdateComponentsWithSaber(GlobalNamespace::Saber* saber) {
+        for (auto* type : tBurnTypes) {
+            auto* components = UnityEngine::Object::FindObjectsOfType(type);
+            for (il2cpp_array_size_t i = 0; i < components->Length(); i++) {
+                auto* sabers = CRASH_UNLESS(il2cpp_utils::GetFieldValue<Array<Il2CppObject*>*>(components->values[i], "_sabers"));
+                sabers->values[saberType] = saber;
+            }
+        }
+
+    }
 };

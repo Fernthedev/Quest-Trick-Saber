@@ -12,7 +12,6 @@
 // Define static fields
 constexpr UnityEngine::Space RotateSpace = UnityEngine::Space::Self;
 
-
 // for "ApplySlowmoSmooth" / "EndSlowmoSmooth"
 static TrickState _slowmoState = Inactive;  // must also be reset in Start()
 static float _slowmoTimeScale;
@@ -296,9 +295,14 @@ void TrickManager::Start2() {
         saberModelT = Saber->get_transform();
     }
     CRASH_UNLESS(saberModelT);
-    auto* saberGO = saberModelT->get_gameObject();
+    UnityEngine::GameObject* saberGO;
+    if (TrailFollowsSaberComponent) {
+        saberGO = Saber->get_gameObject();
+    } else {
+        saberGO = saberModelT->get_gameObject();
+    }
     getLogger().debug("root Saber gameObject: %p", Saber->get_gameObject());
-    _saberTrickModel = new SaberTrickModel(Saber, saberGO, saberModelT == basicSaberT || getPluginConfig().EnableTrickCutting.GetValue());
+    _saberTrickModel = new SaberTrickModel(Saber, _isLeftSaber ? 0 : 1);
     // note that this is the transform of the whole Saber (as opposed to just the model) iff TrickCutting
     _originalSaberModelT = saberGO->get_transform();
 }
@@ -319,6 +323,7 @@ void TrickManager::Clear() {
 
 void TrickManager::Start() {
     getLogger().debug("Audio");
+    if (!VRController) return;
     if (!audioTimeSyncController) {
         getLogger().debug("Audio controllers: %i", audioTimeSyncController);
         // TODO: Is necessary?
@@ -433,6 +438,7 @@ void TrickManager::FixedUpdate() {
 }
 
 void TrickManager::Update() {
+    if (!VRController) return;
     if (!_saberTrickModel) {
         _timeSinceStart += getDeltaTime();
         if (getPluginConfig().EnableTrickCutting.GetValue() || _saberT->Find(_saberName) ||
@@ -512,7 +518,7 @@ void TrickManager::Update() {
     }
     if (_spinState == Ending) {
         auto rot = CRASH_UNLESS(oRot);
-        auto targetRot = getPluginConfig().EnableTrickCutting.GetValue() ? _controllerRotation : Quaternion_Identity;
+        auto targetRot = SpinIsRelativeToVRController ? Quaternion_Identity : _controllerRotation;
 
         float angle = UnityEngine::Quaternion::Angle(rot, targetRot);
         // getLogger().debug("angle: %f (%f)", angle, 360.0f - angle);
@@ -535,12 +541,14 @@ void TrickManager::Update() {
             } else {
                 rot = UnityEngine::Quaternion::Lerp(rot, targetRot, getDeltaTime() * 20.0f);
 
-                _originalSaberModelT->set_localRotation(rot);
+                _saberTrickModel->SpinT->set_localRotation(rot);
             }
         }
     }
     // TODO: no tricks while paused? https://github.com/ToniMacaroni/TrickSaber/blob/ea60dce35db100743e7ba72a1ffbd24d1472f1aa/TrickSaber/SaberTrickManager.cs#L66
     CheckButtons();
+    _saberTrickModel->Update();  // necessary for the trail to follow it
+    // logger().debug("Leaving TrickSaber::Update");
 }
 
 ValueTuple TrickManager::GetTrackingPos() {
@@ -692,6 +700,7 @@ void TrickManager::StaticPause() {
 }
 
 void TrickManager::PauseTricks() {
+    if (!VRController) return;
     if (_saberTrickModel)
         _saberTrickModel->SaberGO->SetActive(false);
 }
@@ -704,6 +713,7 @@ void TrickManager::StaticResume() {
 }
 
 void TrickManager::ResumeTricks() {
+    if (!VRController) return;
     if (_saberTrickModel)
         _saberTrickModel->SaberGO->SetActive(true);
 }
@@ -712,9 +722,14 @@ void TrickManager::ThrowStart() {
     if (_throwState == Inactive) {
         getLogger().debug("%s throw start!", _isLeftSaber ? "Left" : "Right");
 
+        if (_spinState != Inactive) {
+            InPlaceRotationEnd();
+        }
+
+        _saberTrickModel->PrepareForThrow();
         if (!getPluginConfig().EnableTrickCutting.GetValue()) {
-            _saberTrickModel->ChangeToTrickModel();
-            // ListActiveChildren(Saber, "Saber");
+//            _saberTrickModel->ChangeToTrickModel();
+//             ListActiveChildren(Saber, "Saber");
             // ListActiveChildren(_saberTrickModel->SaberGO, "custom saber");
         } else {
             if (_collider->get_enabled())
@@ -829,9 +844,8 @@ void TrickManager::ThrowReturn() {
 void TrickManager::ThrowEnd() {
     getLogger().debug("%s throw end!", _isLeftSaber ? "Left" : "Right");
     _saberTrickModel->Rigidbody->set_isKinematic(true);  // restore
-    if (!getPluginConfig().EnableTrickCutting.GetValue()) {
-        _saberTrickModel->ChangeToActualSaber();
-    } else {
+    _saberTrickModel->EndThrow();
+    if (getPluginConfig().EnableTrickCutting.GetValue()) {
         _collider->set_enabled(true);
 
 //        _saberT->set_position(Vector3_Zero);
@@ -889,10 +903,9 @@ void TrickManager::ThrowEnd() {
 
 void TrickManager::InPlaceRotationStart() {
     getLogger().debug("%s rotate start!", _isLeftSaber ? "Left" : "Right");
+    _saberTrickModel->PrepareForSpin();
     TrickStart();
-    if (getPluginConfig().EnableTrickCutting.GetValue()) {
-        _currentRotation = 0.0f;
-    }
+    _currentRotation = 0.0f;
 
     if (getPluginConfig().IsVelocityDependent.GetValue()) {
         auto angularVelocity = GetAverageAngularVelocity();
@@ -915,25 +928,24 @@ void TrickManager::InPlaceRotationReturn() {
         getLogger().debug("%s spin return!", _isLeftSaber ? "Left" : "Right");
         _spinState = Ending;
         // where the PC mod would start a coroutine here, we'll wind the spin down starting in next TrickManager::Update
-        // so just to maintain the movement: (+ restore the rotation that was reset by VRController.Update iff TrickCutting)
+        // so just to maintain the movement (& restore the rotation that was reset by VRController.Update iff TrickCutting):
         _InPlaceRotate(_finalSpinSpeed);
     }
 }
 
 void TrickManager::InPlaceRotationEnd() {
-    if (!getPluginConfig().EnableTrickCutting.GetValue()) {
+    if (SpinIsRelativeToVRController) {
         _originalSaberModelT->set_localRotation(Quaternion_Identity);
-    } else {
-        _originalSaberModelT->set_localRotation(_controllerRotation);
     }
 
     getLogger().debug("%s spin end!", _isLeftSaber ? "Left" : "Right");
+    _saberTrickModel->EndSpin();
     _spinState = Inactive;
     TrickEnd();
 }
 
 void TrickManager::_InPlaceRotate(float amount) {
-    if (!getPluginConfig().EnableTrickCutting.GetValue()) {
+    if (SpinIsRelativeToVRController) {
         _originalSaberModelT->Rotate(Vector3_Right, amount, RotateSpace);
     } else {
         _currentRotation += amount;
