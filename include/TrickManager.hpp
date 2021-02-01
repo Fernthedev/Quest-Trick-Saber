@@ -109,7 +109,6 @@ class TrickManager {
 		float _finalSpinSpeed;
 		SaberTrickModel* _saberTrickModel = nullptr;
 		float _timeSinceStart = 0.0f;
-		UnityEngine::Transform* _originalSaberModelT = nullptr;
 		Il2CppString* _saberName = nullptr;
 		Il2CppString* _basicSaberName = nullptr;  // only exists up until Start2
 		UnityEngine::Transform* _saberT = nullptr;  // needed for effecient Start2 checking in Update

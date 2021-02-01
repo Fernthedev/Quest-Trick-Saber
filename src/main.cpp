@@ -146,7 +146,9 @@ MAKE_HOOK_OFFSETLESS(Saber_Start, void, Saber* self) {
     }
 
 
-    if (saberType == 0) {
+
+
+    if ((int) saberType == 0) {
         getLogger().debug("Left?");
 //        leftSaber.VRController = vrControllersManager->get_node();
         leftSaber.Saber = self;

@@ -7,6 +7,7 @@
 #include "UnityEngine/Time.hpp"
 #include "UnityEngine/Space.hpp"
 #include "UnityEngine/AudioSource.hpp"
+#include "GlobalNamespace/OVRInput.hpp"
 #include "main.hpp"
 
 // Define static fields
@@ -63,26 +64,26 @@ void ButtonMapping::Update() {
     auto controllerInputDevice = UnityEngine::XR::InputDevice(deviceId); // CRASH_UNLESS(il2cpp_utils::New("UnityEngine.XR", "InputDevice", deviceId));
 
     getLogger().debug("oculusController: %i", (int)oculusController);
-    bool isOculus = CRASH_UNLESS(il2cpp_utils::RunMethod<bool>("", "OVRInput", "IsControllerConnected", oculusController));
+    bool isOculus = GlobalNamespace::OVRInput::IsControllerConnected(oculusController);
     getLogger().debug("isOculus: %i", isOculus);
     auto vrSystem = isOculus ? VRSystem::Oculus : VRSystem::SteamVR;
 
     auto dir = getPluginConfig().ThumbstickDirection.GetValue();
 
     actionHandlers.clear();
-    actionHandlers[(int)getPluginConfig().TriggerAction.GetValue()].insert(std::unique_ptr<InputHandler>(
+    actionHandlers[getPluginConfig().TriggerAction.GetValue()].insert(std::unique_ptr<InputHandler>(
         new TriggerHandler(node, getPluginConfig().TriggerThreshold.GetValue())
     ));
-    actionHandlers[(int)getPluginConfig().GripAction.GetValue()].insert(std::unique_ptr<InputHandler>(
+    actionHandlers[getPluginConfig().GripAction.GetValue()].insert(std::unique_ptr<InputHandler>(
         new GripHandler(vrSystem, oculusController, controllerInputDevice, getPluginConfig().GripThreshold.GetValue())
     ));
-    actionHandlers[(int)getPluginConfig().ThumbstickAction.GetValue()].insert(std::unique_ptr<InputHandler>(
+    actionHandlers[getPluginConfig().ThumbstickAction.GetValue()].insert(std::unique_ptr<InputHandler>(
         new ThumbstickHandler(node, getPluginConfig().ThumbstickThreshold.GetValue(), dir)
     ));
-    actionHandlers[(int)getPluginConfig().ButtonOneAction.GetValue()].insert(std::unique_ptr<InputHandler>(
+    actionHandlers[getPluginConfig().ButtonOneAction.GetValue()].insert(std::unique_ptr<InputHandler>(
         new ButtonHandler(oculusController, GlobalNamespace::OVRInput::Button::One)
     ));
-    actionHandlers[(int)getPluginConfig().ButtonTwoAction.GetValue()].insert(std::unique_ptr<InputHandler>(
+    actionHandlers[getPluginConfig().ButtonTwoAction.GetValue()].insert(std::unique_ptr<InputHandler>(
         new ButtonHandler(oculusController, GlobalNamespace::OVRInput::Button::Two)
     ));
     if (actionHandlers[(int) TrickAction::Throw].empty()) {
@@ -309,7 +310,6 @@ void TrickManager::Clear() {
     _throwState = Inactive;
     _spinState = Inactive;
     _saberTrickModel = nullptr;
-    _originalSaberModelT = nullptr;
 }
 
 void TrickManager::Start() {
@@ -446,7 +446,7 @@ void TrickManager::Update() {
     std::optional<UnityEngine::Quaternion> oRot;
     if (_spinState == Ending) {  // not needed for Started because only Rotate and _currentRotation are used
         // Note: localRotation is the same as rotation for TrickCutting, since parent is VRGameCore
-        auto tmp = _originalSaberModelT->get_localRotation();
+        auto tmp = _saberTrickModel->SpinT->get_localRotation();
 
         std::optional<UnityEngine::Quaternion> opt = std::optional(tmp);
 
@@ -538,6 +538,7 @@ void TrickManager::Update() {
         }
     }
     // TODO: no tricks while paused? https://github.com/ToniMacaroni/TrickSaber/blob/ea60dce35db100743e7ba72a1ffbd24d1472f1aa/TrickSaber/SaberTrickManager.cs#L66
+//    getLogger().debug("Check buttons");
     CheckButtons();
     // logger().debug("Leaving TrickSaber::Update");
 }
@@ -581,6 +582,17 @@ bool CheckHandlersUp(decltype(ButtonMapping::actionHandlers)::mapped_type& handl
     return false;
 }
 
+static std::string actionToString(TrickState state) {
+    switch (state) {
+        case Inactive:
+            return "INACTIVE";
+        case Started:
+            return "STARTED";
+        case Ending:
+            return "ENDING";
+    }
+}
+
 void TrickManager::CheckButtons() {
     // Disable tricks while viewing replays.
     auto* replayMode = getenv("ViewingReplay");
@@ -589,6 +601,8 @@ void TrickManager::CheckButtons() {
 
     // TODO: Remove false condition here when replay fixes bug
     if (replayMode && (strcmp(replayMode, "true") == 0)) return;
+
+//    getLogger().debug("Checking buttons and states: saber name %s throw %s spin %s", to_utf8(csstrtostr(Saber->get_gameObject()->get_name())).c_str(), actionToString(_throwState).c_str(), actionToString(_spinState).c_str());
 
     float power;
 
@@ -718,14 +732,10 @@ void TrickManager::ThrowStart() {
         }
 
         _saberTrickModel->PrepareForThrow();
-        if (!getPluginConfig().EnableTrickCutting.GetValue()) {
-//            _saberTrickModel->ChangeToTrickModel();
-//             ListActiveChildren(Saber, "Saber");
-            // ListActiveChildren(_saberTrickModel->SaberGO, "custom saber");
-        } else {
-            if (_collider->get_enabled())
-                _collider->set_enabled(false);
+        if (getPluginConfig().EnableTrickCutting.GetValue()) {
+            _collider->set_enabled(false);
         }
+
         TrickStart();
 
         auto* rigidBody = _saberTrickModel->Rigidbody;
@@ -772,6 +782,7 @@ void TrickManager::ThrowStart() {
 
         DisableBurnMarks(_isLeftSaber ? 0 : 1);
 
+        getLogger().debug("Throw state set");
         _throwState = Started;
 
         if (getPluginConfig().SlowmoDuringThrow.GetValue()) {
@@ -811,7 +822,10 @@ void TrickManager::ThrowUpdate() {
     // _prevTrickRot = rot;
 }
 
+
+
 void TrickManager::ThrowReturn() {
+    getLogger().debug("Return Throw state %s", _throwState);
     if (_throwState == Started) {
         getLogger().debug("%s throw return!", _isLeftSaber ? "Left" : "Right");
 
@@ -926,7 +940,7 @@ void TrickManager::InPlaceRotationReturn() {
 
 void TrickManager::InPlaceRotationEnd() {
     if (SpinIsRelativeToVRController) {
-        _originalSaberModelT->set_localRotation(Quaternion_Identity);
+        _saberTrickModel->SpinT->set_localRotation(Quaternion_Identity);
     }
 
     getLogger().debug("%s spin end!", _isLeftSaber ? "Left" : "Right");
@@ -937,10 +951,12 @@ void TrickManager::InPlaceRotationEnd() {
 
 void TrickManager::_InPlaceRotate(float amount) {
     if (SpinIsRelativeToVRController) {
-        _originalSaberModelT->Rotate(Vector3_Right, amount, RotateSpace);
+        getLogger().debug("Rotate relative");
+        _saberTrickModel->SpinT->Rotate(Vector3_Right, amount, RotateSpace);
     } else {
+        getLogger().debug("Rotate NOT relative");
         _currentRotation += amount;
-        _originalSaberModelT->Rotate(Vector3_Right, _currentRotation, RotateSpace);
+        _saberTrickModel->SpinT->Rotate(Vector3_Right, _currentRotation, RotateSpace);
     }
 }
 
