@@ -1,6 +1,7 @@
 #pragma once
 
 #include <dlfcn.h>
+#include <stdlib.h>
 #include <unordered_map>
 #include <unordered_set>
 #include <UnityEngine/BoxCollider.hpp>
@@ -73,6 +74,8 @@ class TrickManager {
 		TrickState _spinState;
 
     private:
+        void setSpinState(TrickState state);
+        void setThrowState(TrickState state);
 		void Start2();
 		UnityEngine::Transform * FindBasicSaberTransform();
         ValueTuple GetTrackingPos();
