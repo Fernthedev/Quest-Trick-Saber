@@ -7,6 +7,7 @@
     "version": "0.3.2",
     "url": "https://github.com/Fernthedev/Quest-Trick-Saber",
     "additionalData": {
+      "headersOnly": true,
       "soLink": "https://github.com/Fernthedev/Quest-Trick-Saber/releases/download/v0.3.0/libtricksaber.so",
       "debugSoLink": "https://github.com/Fernthedev/Quest-Trick-Saber/releases/download/v0.3.0/libtricksaber_debug.so"
     }
